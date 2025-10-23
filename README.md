@@ -1,7 +1,7 @@
 # JingPad-Files
 Some files useful for JingPad since Jingling took down the webside and the forum.
 
-All files are avalible [here](https://github.com/MiMillieuh/JingPad-Files/releases)
+All files are avalible [here](https://github.com/Gao-OS/JingPad-Files/releases)
 
 ## What's in the box ?
 
