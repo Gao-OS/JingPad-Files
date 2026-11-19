@@ -1,0 +1,129 @@
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -20,6 +20,11 @@
+ 
+ #include <linux/uaccess.h>
+ #include <asm/unistd.h>
++
++/* Preserve the original exported type view for vendor module CRCs. */
++#ifndef __GENKSYMS__
++#include "mount.h"
++#endif
+ 
+ /**
+  * generic_fillattr - Fill in the basic attributes from the inode struct
+@@ -149,12 +154,13 @@
+ EXPORT_SYMBOL(vfs_statx_fd);
+ 
+ /**
+- * vfs_statx - Get basic and extra attributes by filename
++ * vfs_statx_mnt - Get basic and extra attributes by filename
+  * @dfd: A file descriptor representing the base dir for a relative filename
+  * @filename: The name of the file of interest
+  * @flags: Flags to control the query
+  * @stat: The result structure to fill in.
+  * @request_mask: STATX_xxx flags indicating what the caller wants
++ * @mnt_id: Optional mount ID output, set while the path reference is held
+  *
+  * This function is a wrapper around vfs_getattr().  The main difference is
+  * that it uses a filename and base directory to determine the file location.
+@@ -163,8 +169,8 @@
+  *
+  * 0 will be returned on success, and a -ve error code if unsuccessful.
+  */
+-int vfs_statx(int dfd, const char __user *filename, int flags,
+-	      struct kstat *stat, u32 request_mask)
++static int vfs_statx_mnt(int dfd, const char __user *filename, int flags,
++			 struct kstat *stat, u32 request_mask, u64 *mnt_id)
+ {
+ 	struct path path;
+ 	int error = -EINVAL;
+@@ -187,6 +193,10 @@
+ 		goto out;
+ 
+ 	error = vfs_getattr(&path, stat, request_mask, flags);
++	if (!error && mnt_id) {
++		*mnt_id = real_mount(path.mnt)->mnt_id;
++		stat->result_mask |= STATX_MNT_ID;
++	}
+ 	path_put(&path);
+ 	if (retry_estale(error, lookup_flags)) {
+ 		lookup_flags |= LOOKUP_REVAL;
+@@ -194,6 +204,13 @@
+ 	}
+ out:
+ 	return error;
++}
++
++/* Preserve the exported interface and kstat layout for vendor modules. */
++int vfs_statx(int dfd, const char __user *filename, int flags,
++	      struct kstat *stat, u32 request_mask)
++{
++	return vfs_statx_mnt(dfd, filename, flags, stat, request_mask, NULL);
+ }
+ EXPORT_SYMBOL(vfs_statx);
+ 
+@@ -513,7 +530,7 @@
+ #endif /* __ARCH_WANT_STAT64 || __ARCH_WANT_COMPAT_STAT64 */
+ 
+ static noinline_for_stack int
+-cp_statx(const struct kstat *stat, struct statx __user *buffer)
++cp_statx(const struct kstat *stat, u64 mnt_id, struct statx __user *buffer)
+ {
+ 	struct statx tmp;
+ 
+@@ -542,6 +559,7 @@
+ 	tmp.stx_rdev_minor = MINOR(stat->rdev);
+ 	tmp.stx_dev_major = MAJOR(stat->dev);
+ 	tmp.stx_dev_minor = MINOR(stat->dev);
++	tmp.stx_mnt_id = mnt_id;
+ 
+ 	return copy_to_user(buffer, &tmp, sizeof(tmp)) ? -EFAULT : 0;
+ }
+@@ -563,6 +581,7 @@
+ 		struct statx __user *, buffer)
+ {
+ 	struct kstat stat;
++	u64 mnt_id;
+ 	int error;
+ 
+ 	if (mask & STATX__RESERVED)
+@@ -570,11 +589,11 @@
+ 	if ((flags & AT_STATX_SYNC_TYPE) == AT_STATX_SYNC_TYPE)
+ 		return -EINVAL;
+ 
+-	error = vfs_statx(dfd, filename, flags, &stat, mask);
+-	if (error)
+-		return error;
+-
+-	return cp_statx(&stat, buffer);
++	error = vfs_statx_mnt(dfd, filename, flags, &stat, mask, &mnt_id);
++	if (error)
++		return error;
++
++	return cp_statx(&stat, mnt_id, buffer);
+ }
+ 
+ #ifdef CONFIG_COMPAT
+--- a/include/uapi/linux/stat.h
++++ b/include/uapi/linux/stat.h
+@@ -123,7 +123,10 @@
+ 	__u32	stx_dev_major;	/* ID of device containing file [uncond] */
+ 	__u32	stx_dev_minor;
+ 	/* 0x90 */
+-	__u64	__spare2[14];	/* Spare space for future expansion */
++	__u64	stx_mnt_id;
++	__u64	__spare2;
++	/* 0xa0 */
++	__u64	__spare3[12];	/* Spare space for future expansion */
+ 	/* 0x100 */
+ };
+ 
+@@ -148,6 +151,7 @@
+ #define STATX_BLOCKS		0x00000400U	/* Want/got stx_blocks */
+ #define STATX_BASIC_STATS	0x000007ffU	/* The stuff in the normal stat struct */
+ #define STATX_BTIME		0x00000800U	/* Want/got stx_btime */
++#define STATX_MNT_ID		0x00001000U	/* Got stx_mnt_id */
+ #define STATX_ALL		0x00000fffU	/* All currently supported flags */
+ #define STATX__RESERVED		0x80000000U	/* Reserved for future struct statx expansion */
+ 

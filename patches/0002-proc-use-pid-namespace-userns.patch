@@ -1,0 +1,12 @@
+--- a/fs/proc/root.c
++++ b/fs/proc/root.c
+@@ -121,7 +121,8 @@
+ 			return ERR_PTR(-EPERM);
+ 	}
+ 
+-	sb = sget(fs_type, proc_test_super, proc_set_super, flags, ns);
++	sb = sget_userns(fs_type, proc_test_super, proc_set_super, flags,
++			 ns->user_ns, ns);
+ 	if (IS_ERR(sb))
+ 		return ERR_CAST(sb);
+ 

@@ -1,0 +1,228 @@
+--- a/drivers/firmware/Makefile
++++ b/drivers/firmware/Makefile
+@@ -24,6 +24,7 @@
+ CFLAGS_qcom_scm-32.o :=$(call as-instr,.arch armv7-a\n.arch_extension sec,-DREQUIRES_SEC=1) -march=armv7-a
+ obj-$(CONFIG_TI_SCI_PROTOCOL)	+= ti_sci.o
+ obj-$(CONFIG_SPRD_SIP_FW)	+= sprd_sip_svc.o
++obj-$(CONFIG_SPRD_SIP_FW)	+= jingos_ticket.o
+ 
+ obj-y				+= broadcom/
+ obj-y				+= meson/
+--- /dev/null
++++ b/drivers/firmware/jingos_ticket.c
+@@ -0,0 +1,215 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * JingOS raw NETLINK 30 compatibility interface.
++ *
++ * Reconstructed from the stock JingPad 4.14.133 input_handler/ticket_* code
++ * and independently verified stock protocol probes. This is not recovered
++ * vendor source. Preserve the hardware identity, time and nonce checks used
++ * by the original userspace; packets contain eight little-endian u32 words
++ * without an nlmsghdr. The stock timeout logs and rearms; it never powers off.
++ */
++#include <linux/bitops.h>
++#include <linux/init.h>
++#include <linux/jiffies.h>
++#include <linux/kernel.h>
++#include <linux/mm.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/netlink.h>
++#include <linux/random.h>
++#include <linux/skbuff.h>
++#include <linux/string.h>
++#include <linux/time.h>
++#include <linux/timer.h>
++#include <net/net_namespace.h>
++#include <net/sock.h>
++
++#define TICKET_PROTOCOL 30
++#define TICKET_WORDS 8
++#define TICKET_TIMEOUT 150000UL
++
++extern const char *system_serial;
++
++struct ticket_status {
++	u32 count;
++	u32 nonce;
++	u32 sec;
++	u32 usec;
++	struct timer_list timer;
++	struct mutex mutex;
++};
++
++static struct ticket_status status_vec[3];
++static struct sock *ticket_sock;
++static bool ticket_stopping;
++
++/* Wire codec: u32 arithmetic intentionally wraps exactly as in stock. */
++static void ticket_xor_fields(u32 words[TICKET_WORDS])
++{
++	u32 nonce = words[3];
++
++	words[0] ^= 3U * nonce + 6060U;
++	words[1] ^= 5U * nonce + 1005U;
++	words[2] ^= nonce + 4567U;
++	words[4] ^= nonce + 39U;
++	words[5] ^= nonce + 5U;
++	words[6] ^= nonce + 7U;
++	words[7] ^= nonce + 20U;
++}
++
++static void ticket_decode(u32 words[TICKET_WORDS])
++{
++	u32 mix = words[7] ^ ror32(words[7], 16);
++	unsigned int i;
++
++	for (i = 0; i < TICKET_WORDS - 1; i++)
++		words[i] ^= mix;
++	ticket_xor_fields(words);
++}
++
++static void ticket_encode(u32 words[TICKET_WORDS])
++{
++	u32 mix;
++	unsigned int i;
++
++	ticket_xor_fields(words);
++	mix = words[7] ^ ror32(words[7], 16);
++	for (i = 0; i < TICKET_WORDS - 1; i++)
++		words[i] ^= mix;
++}
++
++static void ticket_shutdown(unsigned long kind)
++{
++	if (READ_ONCE(ticket_stopping))
++		return;
++	pr_info("Ticket[%lu] shutdown\n", kind);
++	if (!READ_ONCE(ticket_stopping))
++		mod_timer(&status_vec[kind].timer, jiffies + TICKET_TIMEOUT);
++}
++
++static void input_handler(struct sk_buff *skb)
++{
++	__le32 wire[TICKET_WORDS];
++	u32 request[TICKET_WORDS], reply[TICKET_WORDS];
++	struct ticket_status *status;
++	struct sk_buff *out;
++	struct sysinfo info;
++	struct timeval now;
++	char serial_text[17];
++	u64 serial;
++	u32 sec, usec, nonce;
++	unsigned int i;
++	int ret;
++
++	if (skb->len != sizeof(wire) ||
++	    skb_copy_bits(skb, 0, wire, sizeof(wire)))
++		return;
++	for (i = 0; i < TICKET_WORDS; i++)
++		request[i] = le32_to_cpu(wire[i]);
++	ticket_decode(request);
++	if (request[0] != 1 && request[0] != 2)
++		return;
++
++	status = &status_vec[request[0]];
++	mutex_lock(&status->mutex);
++	if (READ_ONCE(ticket_stopping) || !READ_ONCE(ticket_sock))
++		goto unlock;
++	/* Stock consumes the first 16 hex characters of the DT serial. */
++	if (!system_serial || strnlen(system_serial, 16) != 16)
++		goto unlock;
++	memcpy(serial_text, system_serial, 16);
++	serial_text[16] = '\0';
++	if (kstrtoull(serial_text, 16, &serial))
++		goto unlock;
++	reply[0] = 1;
++	reply[1] = (u32)(serial >> 32);
++	reply[2] = (u32)serial;
++	get_random_bytes(&reply[3], sizeof(reply[3]));
++	si_meminfo(&info);
++	reply[4] = (u32)(info.totalram * (PAGE_SIZE / 1024));
++	do_gettimeofday(&now);
++	sec = (u32)now.tv_sec;
++	usec = (u32)now.tv_usec;
++	reply[5] = sec;
++	reply[6] = usec;
++	reply[7] = request[3];
++	if (request[1] != reply[1] || request[2] != reply[2] ||
++	    request[4] != reply[4] || request[5] > sec ||
++	    sec - request[5] > 1 ||
++	    (request[5] == sec && request[6] >= usec))
++		goto unlock;
++
++	/* A broken chain restarts the two-request sequence, not the handshake. */
++	if (status->count &&
++	    (request[7] != status->nonce || request[5] < status->sec ||
++	     request[5] - status->sec > 1 ||
++	     (request[5] == status->sec && request[6] <= status->usec)))
++		status->count = 0;
++	/* Keep the plaintext nonce before encoding the reply in place. */
++	nonce = reply[3];
++	ticket_encode(reply);
++	for (i = 0; i < TICKET_WORDS; i++)
++		wire[i] = cpu_to_le32(reply[i]);
++	out = alloc_skb(sizeof(wire), GFP_KERNEL);
++	if (!out) {
++		pr_err("Alloc ticket skb failed\n");
++		goto unlock;
++	}
++	memcpy(skb_put(out, sizeof(wire)), wire, sizeof(wire));
++	NETLINK_CB(out).portid = 0;
++	NETLINK_CB(out).dst_group = 0;
++	ret = netlink_unicast(ticket_sock, out, NETLINK_CB(skb).portid,
++			      MSG_DONTWAIT);
++	if (ret < 0) {
++		pr_err("Send ticket skb failed: %d\n", ret);
++		goto unlock;
++	}
++	status->nonce = nonce;
++	status->sec = sec;
++	status->usec = usec;
++	if (++status->count >= 2) {
++		status->count = 0;
++		mod_timer(&status->timer, jiffies + TICKET_TIMEOUT);
++	}
++unlock:
++	mutex_unlock(&status->mutex);
++}
++
++static int __init ticket_init_module(void)
++{
++	struct netlink_kernel_cfg cfg = {
++		.groups = 0,
++		.flags = 0,
++		.input = input_handler,
++	};
++	unsigned int i;
++
++	for (i = 0; i < ARRAY_SIZE(status_vec); i++) {
++		mutex_init(&status_vec[i].mutex);
++		setup_timer(&status_vec[i].timer, ticket_shutdown, i);
++	}
++	ticket_sock = netlink_kernel_create(&init_net, TICKET_PROTOCOL, &cfg);
++	if (!ticket_sock)
++		return -ENODEV;
++	pr_info("Ticket netlink module loaded.\n");
++	return 0;
++}
++
++static void __exit ticket_cleanup_module(void)
++{
++	unsigned int i;
++
++	WRITE_ONCE(ticket_stopping, true);
++	for (i = 0; i < ARRAY_SIZE(status_vec); i++) {
++		mutex_lock(&status_vec[i].mutex);
++		del_timer_sync(&status_vec[i].timer);
++		mutex_unlock(&status_vec[i].mutex);
++	}
++	netlink_kernel_release(ticket_sock);
++	pr_info("Ticket netlink module unloaded.\n");
++}
++
++module_init(ticket_init_module);
++module_exit(ticket_cleanup_module);
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Stock-compatible JingOS Ticket netlink interface");
