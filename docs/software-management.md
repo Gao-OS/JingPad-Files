@@ -113,7 +113,43 @@ flatpak run --user "$app_id"
 
 Inspect the architecture, runtime, disk usage, and permissions in the installation prompt. The first runtime download may be much larger than the app. After installation, test touch, keyboard, windows, file chooser, and any required audio/video features.
 
-User-installed desktop entries are exported to `~/.local/share/flatpak/exports/share`. If icons do not appear, log out and back in. Discover has a Flatpak backend, but its remote management and installation UI remain untested; CLI output is the diagnostic reference.
+User-installed desktop entries are exported to `~/.local/share/flatpak/exports/share`. On this JingOS build, additional integration was needed for the home screen to register them; follow the steps below.
+
+### Graphical Flathub store
+
+Bazaar 0.10.0 (`io.github.kolunmi.Bazaar`, aarch64) was installed for `gao` on 2026-11-20. Its window started, the ARM64 application catalog synchronized, and its search provider returned application results. The user reported seeing the store. Installing an application through its graphical interface still needs separate verification.
+
+Open **Bazaar** from the home screen, or run this in `gao`'s desktop terminal:
+
+```bash
+flatpak run --user io.github.kolunmi.Bazaar
+```
+
+Flathub provides the software repository; Bazaar provides its graphical browser and installer. The bundled JingOS Discover build only listed `packagekit-backend` in `plasma-discover --listbackends`. Although `plasma-discover-backend-flatpak` was installed, its package contained documentation without a backend plugin. Use Bazaar for the graphical Flatpak workflow on this device.
+
+### Missing home screen icons
+
+On 2026-11-20, linking the exported launchers into `~/.local/share/applications` and rebuilding the KDE application cache caused JingOS to add Bazaar and GNOME Calculator to its saved home screen grid. The original icon positions were preserved. The links follow Flatpak's exported launchers across application updates.
+
+The links, KDE cache entries, and saved grid positions were verified. After unlocking the tablet, the user confirmed that both icons were visible and that tapping each icon opened its application. Earlier native KDE command-line launch probes timed out after 25 seconds while the tablet was locked; those timeouts are retained in the maintenance logs.
+
+Run as **`gao` in the tablet's graphical terminal**, without sudo:
+
+```bash
+mkdir -p "$HOME/.local/share/applications"
+for desktop_file in "$HOME/.local/share/flatpak/exports/share/applications/"*.desktop; do
+  [ -f "$desktop_file" ] || continue
+  launcher_path="$HOME/.local/share/applications/${desktop_file##*/}"
+  if [ ! -e "$launcher_path" ] && [ ! -L "$launcher_path" ]; then
+    ln -s -- "$desktop_file" "$launcher_path"
+  fi
+done
+kbuildsycoca5 --noincremental
+```
+
+This preserves existing files and links. Repeat after installing another app if its icon is missing; automatic integration for future installations has not been configured. Return to the home screen and tap each new icon to verify visibility and launch. GNOME Calculator and the factory Calculator are separate applications.
+
+After uninstalling an app, inspect its user launcher with `readlink` and remove only a link pointing to that app's Flatpak export, then rebuild the cache. Preserve unrelated launchers. A KDE cache query alone does not establish that an icon is visible or can be tapped.
 
 ## Updates, permissions, and removal
 
