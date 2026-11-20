@@ -34,6 +34,7 @@ The combined kernel booted successfully. Checks passed for all 11,524 exported s
 5. [Historical Flatpak test log](docs/flatpak-test-2026-11-13.md): package changes, signature checks, installation results, kernel blockers, and rollback materials.
 6. [Kernel source and upgrade feasibility](docs/kernel-upgrade-research.md): official 4.14 source, the UD710 5.15 candidate, driver gaps, and validation steps.
 7. [4.14 mount ID backport execution log](docs/kernel-backport-2026-11-18.md): builds, boot signing, backups, failed attempts, and final device acceptance.
+8. [Rebuilding application and update services](docs/self-hosted-services.md): observed vendor APIs, signed Flatpak/APT repositories, client migration, staged validation, and rollback requirements.
 
 ## Connect to the device
 

@@ -127,6 +127,8 @@ flatpak run --user io.github.kolunmi.Bazaar
 
 Flathub provides the software repository; Bazaar provides its graphical browser and installer. The bundled JingOS Discover build only listed `packagekit-backend` in `plasma-discover --listbackends`. Although `plasma-discover-backend-flatpak` was installed, its package contained documentation without a backend plugin. Use Bazaar for the graphical Flatpak workflow on this device.
 
+For replacing the vendor catalog and system-update services, see [Rebuilding JingOS Application and Update Services](self-hosted-services.md). That guide records the inspected interfaces and a proposed self-hosted migration procedure; the replacement services have not been deployed.
+
 ### Missing home screen icons
 
 On 2026-11-20, linking the exported launchers into `~/.local/share/applications` and rebuilding the KDE application cache caused JingOS to add Bazaar and GNOME Calculator to its saved home screen grid. The original icon positions were preserved. The links follow Flatpak's exported launchers across application updates.
