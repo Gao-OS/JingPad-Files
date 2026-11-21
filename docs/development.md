@@ -8,6 +8,7 @@
 | --- | --- | --- |
 | Touch-oriented business UI or control panel | Web / Phoenix, accessed through a browser | Networking verified; the specific project, browser compatibility, and service remain unverified |
 | Close integration with the JingOS desktop | Qt Quick / QML matching the installed Qt 5.15.2 and interfaces | System Qt libraries confirmed; development SDK not configured |
+| Flutter desktop UI | Package a Linux ARM64 release with a compatible Flatpak runtime | GSMLG basic use, 2x sizing/touch, and keyboard entry confirmed on 2026-11-21; Chinese display confirmed on 2026-11-22 |
 | Independently distributed desktop app | Build an aarch64 Flatpak with a matching runtime | Calculator CLI and GUI passed with the combined kernel patches, and the user confirmed touch and sound; custom apps need separate acceptance tests |
 | Long-running Elixir backend service | ARM64 Release including ERTS, managed by systemd | Hardware and system prerequisites are available; no project has been selected or deployed |
 
@@ -31,6 +32,102 @@ GCC and Python are available; G++, CMake, and Git are not installed. `qmake` exi
 If tools are needed, follow the [software management guide](software-management.md) to restore APT repositories for the same Ubuntu release and simulate installation first. Build in a compatible ARM64 environment and transfer artifacts with ADB if appropriate. Installing an SDK must not replace the JingOS Qt/KDE stack with ordinary Ubuntu desktop packages.
 
 Run graphical tests in the tablet's desktop session. If testing software rendering, set variables only for the target process and record the result; do not change the entire desktop graphics configuration.
+
+## Flutter Linux desktop apps
+
+On 2026-11-21, the existing GSMLG ARM64 Linux release from `rock-5-itx` was packaged and installed for `gao` as `org.gsmlg.app`. Its source revision is `d5120c82c6bd956ea630941a4f686cab3d7954cf`, built with Flutter **3.47.7** and Dart **3.13.5**, with local LLM support disabled. The existing executable, plugins, and application assets were reused; no Flutter SDK is needed on the tablet. The original kiosk process on `rock-5-itx` remained running.
+
+The native executable requires glibc 2.34, and its secure-storage plugin requires 2.38; JingOS provides 2.31. The Flatpak uses the already installed `org.gnome.Platform/aarch64/51`, whose glibc was 2.44 at this check, together with its GTK3, GStreamer, and libsecret libraries. A build for another CPU architecture, or a bundle requiring newer native symbols, needs a separate compatibility check.
+
+Run these commands in **`gao`'s graphical terminal on the tablet**:
+
+```bash
+flatpak info --user org.gsmlg.app
+flatpak info --user --show-commit org.gsmlg.app
+flatpak run --user org.gsmlg.app
+```
+
+The installed commit is `34e5d12bf19f059e62ffa1625ea9e5813dbb830d4bd96de719bfa9dc3db78f2b`, including the screen-keyboard integration and Chinese font profile below. The app wrapper sets `LD_LIBRARY_PATH=/app/lib/gsmlg/lib:/app/lib`, `LIBGL_ALWAYS_SOFTWARE=1`, and `LP_NUM_THREADS=2` for this app. The startup log reported the Impeller OpenGLESSDF backend. This verifies a software-rendering deployment; hardware acceleration has not been established.
+
+### HiDPI configuration
+
+The user confirmed that GSMLG was usable, then reported that text, buttons, and icons were all too small. GTK 3.24.52 in the app's native Wayland session reported scale 1 and a logical monitor size of 2072 by 1512. A process-local `GDK_SCALE=2` probe still reported scale 1 on Wayland. Flutter 3.47.7's Linux embedder derives its viewport pixel ratio and input-coordinate scaling from GTK's widget scale factor.
+
+The current device profile runs **only GSMLG** through Xwayland with a GTK scale factor of 2. Run as `gao`:
+
+```bash
+flatpak override --user --nosocket=wayland --socket=x11 \
+  --env=GDK_BACKEND=x11 --env=GDK_SCALE=2 org.gsmlg.app
+```
+
+Close GSMLG normally, then reopen it from its home screen icon or with `flatpak run --user org.gsmlg.app`. The override persists for future launches. A probe using the saved profile, without additional launch flags, reported an X11 display, GTK widget/monitor scales of 2, and a logical monitor size of 1036 by 756. The restarted app remained running with the saved environment and a responsive 2072-by-1470 Xwayland window. The user confirmed that the size and touch behavior were satisfactory. A full reboot has not been tested with this profile.
+
+The previous override state and DPI verification records are retained under `dpi-20261121T112950Z-57jlv4px/` inside the maintenance directory below. That initial state had no app-specific override file. If these display settings remain the only user overrides, `flatpak override --user --reset org.gsmlg.app` restores the original profile after restarting the app. If other overrides have since been added, preserve them when reverting the display settings.
+
+### On-screen keyboard
+
+After the DPI adjustment, the user reported that several input fields could not open the screen keyboard. JingOS's Maliit keyboard was running and enabled. The sandbox inherited `GTK_IM_MODULE=Maliit`, but the GNOME runtime had no Maliit GTK module, and the app had no permission to discover `org.maliit.server`. Setting the environment variable alone was insufficient.
+
+The keyboard rebuild includes the existing tablet's `maliit-inputcontext-gtk3` module, the matching `libmaliit-glib.so.0`, and its private Qt5Core, double-conversion, and ICU 66 dependencies. These were copied from the working JingOS installation and checked in the GNOME runtime. At that rebuild, all 157 original release-manifest files remained hash-identical. The package adds a GTK module cache containing the runtime's original entries plus `Maliit`, and declares:
+
+```ini
+[Environment]
+GTK_IM_MODULE=Maliit
+GTK_IM_MODULE_FILE=/app/lib/gtk-3.0/3.0.0/immodules.cache
+LD_LIBRARY_PATH=/app/lib/gsmlg/lib:/app/lib
+
+[Session Bus Policy]
+org.maliit.server=talk
+```
+
+The Maliit address is discovered through D-Bus; its peer connection uses an abstract Unix socket reachable through the app's existing shared network namespace. No host filesystem grant was added to the installed app. This integration targets the GTK3/X11 profile above; native Wayland and other GTK versions need separate checks.
+
+Loader relocation checks passed, a sandbox probe selected the `Maliit` context and read the server address, and the restarted GSMLG process loaded both Maliit libraries while retaining scale 2. The user then confirmed automatic keyboard popup and text entry. The validation did not record the entered text. Complex composition, additional keyboard layouts, and a full reboot have not been tested.
+
+The signed rebuild, source-package versions, library hashes, rollback commit, and acceptance records are under `keyboard-20261121T140031Z-om8jtl02/` in the maintenance directory below. The previous app commit was `3df331c3a9668885528b7ca93309aeae882eef000ff79593988443cc7fc3770a`; app data and the DPI override were preserved during the update.
+
+### Chinese text and packaged fonts
+
+Chinese characters appeared as missing-glyph boxes in GSMLG even though JingOS displayed Chinese correctly. Both the host and sandbox's `fc-match sans-serif:lang=zh-cn` found Source Han Sans CN; inside Flatpak it was mounted under `/run/host/fonts/`. Fontconfig availability alone did not establish that Flutter used those fonts.
+
+The matching Flutter 3.47.7 engine source (`deb287481e3ce9468f3434937ced4240a70539ca`) selects a directory font manager scanning `/usr/share/fonts/` when built without Fontconfig support. Its matching Skia directory manager has no character-based fallback. The deployed engine contained that directory path and no Fontconfig API imports. Changing the system language or rebuilding Fontconfig caches does not supply the missing Flutter default font.
+
+The device profile now includes the tablet's unchanged `SourceHanSansCN-Regular-2.otf` as a Flutter asset, with the SIL Open Font License included under `/app/share/licenses/org.gsmlg.app/`. Append this entry to the existing `data/flutter_assets/FontManifest.json`, preserving all existing icon and math font declarations:
+
+```json
+{
+  "family": "Ubuntu",
+  "fonts": [
+    {"asset": "fonts/SourceHanSansCN-Regular.otf", "weight": 400}
+  ]
+}
+```
+
+`Ubuntu` is an application-level alias for Source Han Sans CN here, chosen because it is the engine's first Linux default family. It supplies a CJK-capable default when a requested family is unavailable; it does not install the Ubuntu font or implement arbitrary system-font fallback. This also changes the default Latin font. Explicit requests for an available Latin-only family can still lack Chinese glyphs, and additional scripts, emoji, and font weights need separate validation. No GSMLG source or engine binary was changed.
+
+A small release-mode rendering fixture was built on `rock-5-itx` with two CPUs and nice level 10. Its engine was hash-identical to GSMLG's. In the actual sandbox, the original profile rendered four known Chinese characters as one identical missing glyph. With the packaged default, all four characters matched the independently loaded reference font exactly for default, `Roboto`, `monospace`, and `sans-serif` requests. These images contain fixed test text, not a desktop capture or user input. The original GSMLG release's other 156 manifest-listed files remained hash-identical; only `FontManifest.json` changed, alongside the added font and license.
+
+The signed font update was installed on 2026-11-22 (tablet local time), preserving the keyboard metadata, app-specific DPI override, and launcher layout. After a normal close and restart, the responsive GSMLG process mapped the new font and both Maliit libraries while retaining `GDK_SCALE=2`. The user confirmed normal Chinese display after the update. Its previous commit is `bd6553164bec22b48d7510e6cff4117b491e9df43f00806fd1e7ce451bd4392d`. Package, signature, rollback, rendering, and user-acceptance records are retained under `fonts-20261121T155640Z-c5eoca36/` in the maintenance directory below. A full reboot with this profile remains untested.
+
+### Local repository and updates
+
+The local origin is `jingpad-gsmlg-local`. Both the repository commit and summary signatures were checked with GPG, and both signature requirements are enabled on that remote. The signing fingerprint is `EE8C81A7E35BFFC2CA828CEF34CCEF4ADCAA04AF`. This is a private local test repository, not a public update service. Its key and build materials are retained outside Git under `/home/gao/jingos-maintenance/flutter-20261121T094800Z-gsmlg-2itfd9mq/` on the tablet. Keep that repository available when updating this app:
+
+```bash
+flatpak update --user --no-deps --no-related org.gsmlg.app
+```
+
+This applies only the local app rebuild with the already installed, verified runtime. It does not resolve or update runtime dependencies; check the declared runtime separately for future builds. An earlier update attempt with dependency/related-ref handling enabled timed out; this app-only update completed. The command does not fetch a newer GSMLG source revision or rebuild it. Future releases must first be exported and signed with the same trusted key, or use an explicitly configured replacement repository. Single-file `.flatpak` generation timed out after 150 seconds during this experiment; the successful installation used the signed local repository directly.
+
+Packaging and acceptance findings:
+
+- All 157 files listed in the original build manifest passed hash verification after transfer. The font rebuild intentionally changes only `FontManifest.json` among those original files, as explained above. Dynamic-loader relocation checks passed for the runner, SQLite, and Tree-sitter libraries in the chosen runtime.
+- PNG launcher icons must be at most 512 pixels per side for Flatpak export. The package exports a 256-pixel PNG and the original SVG; the original application icon assets are preserved.
+- A `flatpak build` test needed an explicit display variable, then failed because GTK's image-loader helper tried to spawn an uninstalled app. After installation, the same nested-sandbox probe passed. Test the installed application when validating these helpers.
+- The initial native Wayland window submitted a 2072-by-1470 buffer, and the user confirmed basic use. The current profile uses Xwayland with user-confirmed 2x sizing/touch and Maliit keyboard input. Its window, live process, input module, and service access were checked separately. Other application features need separate acceptance. AT-SPI and unsupported desktop-portal settings produced startup warnings and remain unverified.
+- `/usr/share/applications/org.gsmlg.app.desktop` links to the user's stable Flatpak export, following the [home screen integration procedure](software-management.md#missing-home-screen-icons). KDE found one launcher, JingOS saved it at `0,11`, and previous positions were preserved. Icon visibility, tapping this new icon, and a full device reboot remain unverified.
+
+App data belongs to the tablet user under `~/.var/app/org.gsmlg.app/`; the kiosk's account data and credentials were not copied. To remove this test installation, use `flatpak uninstall --user org.gsmlg.app` and remove only its matching system launcher link as described in the software guide. Preserve app data unless deletion is intended.
 
 ## Flatpak application development
 
@@ -208,4 +305,4 @@ These repositories explain existing interfaces and build methods. Their availabi
 - [Flatpak first build](https://docs.flatpak.org/en/latest/first-build.html)
 - [Mix Release documentation](https://hexdocs.pm/mix/Mix.Tasks.Release.html)
 
-Some old SDK and installation links are unavailable and need individual checks. The historical [Flutter installation guide](https://github.com/JingOS-team/JingOS/blob/main/doc/guide_install_flutter.md) discusses OpenGL/libhybris compatibility and software rendering. Flutter GUI has not been verified on this device and is not listed as a working development environment.
+Some old SDK and installation links are unavailable and need individual checks. The historical [Flutter installation guide](https://github.com/JingOS-team/JingOS/blob/main/doc/guide_install_flutter.md) discusses OpenGL/libhybris compatibility and software rendering. See [Flutter Linux desktop apps](#flutter-linux-desktop-apps) for the current GSMLG deployment and its acceptance limits.
