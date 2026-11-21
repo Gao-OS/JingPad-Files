@@ -131,27 +131,47 @@ For replacing the vendor catalog and system-update services, see [Rebuilding Jin
 
 ### Missing home screen icons
 
-On 2026-11-20, linking the exported launchers into `~/.local/share/applications` and rebuilding the KDE application cache caused JingOS to add Bazaar and GNOME Calculator to its saved home screen grid. The original icon positions were preserved. The links follow Flatpak's exported launchers across application updates.
+**Update, 2026-11-21:** the earlier per-user launcher links worked while the desktop was running, but did not restore the icons when the home screen started again. Both applications, the links, the KDE cache entries, and the saved icon positions survived. Reinstalling the applications is unnecessary.
 
-The links, KDE cache entries, and saved grid positions were verified. After unlocking the tablet, the user confirmed that both icons were visible and that tapping each icon opened its application. Earlier native KDE command-line launch probes timed out after 25 seconds while the tablet was locked; those timeouts are retained in the maintenance logs.
+The installed `homescreen` package, `0.1+p20.04+git20220119.10346-0`, has a startup path bug. A fresh-process syscall trace showed it trying to read these nonexistent paths, omitting the separator after `applications`:
 
-Run as **`gao` in the tablet's graphical terminal**, without sudo:
+```text
+/home/gao/.local/share/applicationsio.github.kolunmi.Bazaar.desktop
+/home/gao/.local/share/applicationsorg.gnome.Calculator.desktop
+```
+
+It reads `/usr/share/applications/` correctly. The repair adds two root-owned symbolic links there, pointing to `gao`'s existing Flatpak exports. The existing user links and grid positions are preserved. Using the same desktop filenames avoids adding separate launcher identities; the export links follow application updates. This is a workaround for this JingOS launcher on this single-user tablet. The applications remain installed for `gao`, rather than becoming system Flatpak installations.
+
+The related upstream report is [JingOS issue #124](https://github.com/JingOS-team/JingOS/issues/124). Its older public source explains the directory-loading limitations; the missing separator above was confirmed directly on the installed January 2022 binary.
+
+Run in **`gao`'s graphical terminal on the tablet**. Only creating links in the system directory requires sudo:
 
 ```bash
-mkdir -p "$HOME/.local/share/applications"
-for desktop_file in "$HOME/.local/share/flatpak/exports/share/applications/"*.desktop; do
-  [ -f "$desktop_file" ] || continue
-  launcher_path="$HOME/.local/share/applications/${desktop_file##*/}"
-  if [ ! -e "$launcher_path" ] && [ ! -L "$launcher_path" ]; then
-    ln -s -- "$desktop_file" "$launcher_path"
+for app_id in io.github.kolunmi.Bazaar org.gnome.Calculator; do
+  desktop_file="$HOME/.local/share/flatpak/exports/share/applications/$app_id.desktop"
+  launcher_path="/usr/share/applications/$app_id.desktop"
+  if [ ! -f "$desktop_file" ]; then
+    printf 'Missing Flatpak export: %s\n' "$desktop_file" >&2
+    continue
   fi
+  if [ -e "$launcher_path" ] || [ -L "$launcher_path" ]; then
+    printf 'Preserving existing launcher; inspect with readlink: %s\n' "$launcher_path"
+    continue
+  fi
+  sudo ln -s -- "$desktop_file" "$launcher_path"
 done
 kbuildsycoca5 --noincremental
 ```
 
-This preserves existing files and links. Repeat after installing another app if its icon is missing; automatic integration for future installations has not been configured. Return to the home screen and tap each new icon to verify visibility and launch. GNOME Calculator and the factory Calculator are separate applications.
+For another installed app, substitute its exact exported desktop filename. The commands preserve every existing destination, including dangling links; inspect any conflict instead of overwriting it. Automatic integration for future installations has not been configured. From an ADB root shell, use `/home/gao` explicitly instead of root's `$HOME`, omit sudo, and run the cache rebuild as `gao`.
 
-After uninstalling an app, inspect its user launcher with `readlink` and remove only a link pointing to that app's Flatpak export, then rebuild the cache. Preserve unrelated launchers. A KDE cache query alone does not establish that an icon is visible or can be tapped.
+On 2026-11-21, after adding the links, a fresh home screen process resolved both system links and successfully opened both canonical Flatpak desktop files. The saved `Position.conf` remained byte-for-byte unchanged. This checks startup loading, rather than only a live directory-change notification. The user then confirmed that the icons had returned. Tapping both launchers after this revised repair and a full device reboot have not yet been verified. Earlier, the user confirmed both icons and launches after the per-user-only repair; those results did not establish restart persistence. GNOME Calculator and the factory Calculator are separate applications.
+
+For manual acceptance, return to the home screen, verify both icons, and tap each one. Repeat after a normal logout/login or reboot when convenient. A KDE cache query or successful file read alone does not establish that an icon is visible or can be tapped. Avoid killing the entire graphical session merely to refresh icons.
+
+After uninstalling an app, inspect both `/usr/share/applications/<app-id>.desktop` and `~/.local/share/applications/<app-id>.desktop` with `readlink`. Remove only links created by this procedure that point to that app's exact Flatpak export, using sudo only for the system link, then rebuild the cache as `gao`. Preserve unrelated and package-owned launchers.
+
+The pre-repair layout, launcher contents and link targets, baseline/repaired traces, and verification records are retained outside Git in `/home/gao/jingos-maintenance/flatpak-launcher-persistence-20261121T080418Z-6zxfdtr3/` on the tablet. Rolling back this workaround only requires removing the two matching system links and rebuilding the user cache; the user launchers and saved layout were not changed.
 
 ## Updates, permissions, and removal
 
