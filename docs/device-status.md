@@ -4,7 +4,7 @@
 
 ## Verification scope
 
-Updated: 2026-11-19. Base system information and factory hardware behavior were checked on November 12-14; the combined kernel patches were tested on November 19. Results come from the connected JingPad C1 and local installation acceptance records. IP addresses, free space, process states, and network results are snapshots from those checks.
+Updated: 2026-11-22. Base system information and factory hardware behavior were checked on November 12-14; the combined kernel patches were tested on November 19, and wireless SSH/SFTP access on November 22. Results come from the connected JingPad C1 and local installation acceptance records. IP addresses, free space, process states, and network results are snapshots from those checks.
 
 Kernel update, 2026-11-19: the device runs the `statx-proc-ticket-v1` combined patches. `/proc/version` contains `gao@jingpad-patched-ticket-statx414`, while the release remains `4.14.133-202201191758+`. Real mount ID, proc sandbox, Ticket protocol, original module, and desktop service checks passed. Flatpak Calculator returned `4` for `2+2` and `30` for `(12+8)*3/2`. The user confirmed Calculator display and interaction, touch, and speakers on this kernel. Factory backups and verified rollback materials are retained. See the [kernel execution log](kernel-backport-2026-11-18.md).
 
@@ -13,6 +13,7 @@ Kernel update, 2026-11-19: the device runs the `statx-proc-ticket-v1` combined p
 | Item | Device result |
 | --- | --- |
 | Model | JingPad C1 |
+| Hostname | `jingpad-a1`, configured on 2026-11-22 |
 | OS | JingOS v1.2.0 / JingOS Preview Edition |
 | Ubuntu base | 20.04, `focal`; `ID_LIKE="ubuntu debian"` |
 | CPU architecture | `aarch64`; Debian package architecture is `arm64` |
@@ -47,6 +48,7 @@ The initial Linux installation and boot acceptance tests are complete. All 35 wr
 | Touch / speakers | Confirmed by the user with both the factory kernel and the current combined patches |
 | Wi-Fi / DNS / HTTPS | Verified on the tablet with both the factory kernel and the current combined patches |
 | USB / wireless ADB | Both have reached the same Linux root environment |
+| SSH / SFTP | OpenSSH enabled at boot; key login as `gao` and SFTP verified over Wi-Fi on 2026-11-22 |
 | Flatpak apps | User-level Flathub and ARM64 Calculator 51.1 are installed; CLI calculation and GUI interaction passed with the combined kernel; file chooser, Flatpak audio/video, and app GPU acceleration remain unverified |
 | Elixir / Phoenix services | Not deployed |
 | Long-running services after closing the cover or turning off the screen | Unverified; access while awake does not establish this |
@@ -83,11 +85,61 @@ DHCP assigns this address; it is not a fixed device address. If it is unreachabl
 adb -s "$JINGPAD_SERIAL" shell ip -4 -brief address show wlan0
 ```
 
-Wireless ADB grants root access and should be used only on a trusted LAN. `ssh` / `sshd` is masked; ADB reachability does not mean SSH is enabled. SSH was not enabled during this work.
+Wireless ADB grants root access and should be used only on a trusted LAN. It is separate from the SSH service enabled on 2026-11-22, described below.
+
+## SSH over Wi-Fi
+
+OpenSSH server, client, and SFTP packages are installed at version `1:8.2p1-4ubuntu0.13`. `ssh.service` is running, listens on TCP port **22**, and is enabled at boot. On 2026-11-22, the saved Wi-Fi connection was reactivated and the tablet obtained `10.100.8.232`:
+
+```bash
+ssh gao@jingpad-a1
+sftp gao@jingpad-a1
+```
+
+The persistent system hostname and the saved Wi-Fi profile's `ipv4.dhcp-hostname` are both `jingpad-a1`. The existing LAN DHCP/DNS service publishes `jingpad-a1.gsmlg.net`. The short name uses this LAN's `gsmlg.net` DNS search suffix; clients without that suffix can use `ssh gao@jingpad-a1.gsmlg.net`. Both names resolved to the tablet and passed SSH login checks on 2026-11-22, with the remote system reporting hostname `jingpad-a1` and UID 1000. The SSH host key was preserved.
+
+The maintenance computer's existing public key is authorized for `gao`. Password, keyboard-interactive, and root SSH login are disabled through `/etc/ssh/sshd_config.d/00-jingpad-remote-access.conf`; the original main configuration is preserved. Other computers need their own public keys added to `/home/gao/.ssh/authorized_keys` through an already trusted SSH session or USB ADB. Keep `.ssh` owned by `gao` with mode `700` and `authorized_keys` with mode `600`.
+
+The server's ED25519 host fingerprint, obtained through USB ADB and checked during the wireless connection, is:
+
+```text
+SHA256:464rMLBIsPgLFYFJqEjDqWX63C817V3AapZ3SAaSqG0
+```
+
+The address is assigned by DHCP. Query the current `wlan0` address through USB if it changes. Direct login from the maintenance computer's `10.100.10.24` address reached `10.100.8.232:22` as UID 1000; the normal client configuration and SFTP both passed without an ADB tunnel. Reachability after a full reboot, screen-off, or suspend remains untested.
+
+Manage the service on the tablet:
+
+```bash
+systemctl status ssh.service
+sudo systemctl restart ssh.service
+```
+
+To turn off SSH and prevent automatic startup:
+
+```bash
+sudo systemctl disable --now ssh.service
+```
+
+Installation used signature-verified official Ubuntu focal indexes in a separate directory. Only `openssh-client`, `openssh-server`, and `openssh-sftp-server` changed; persistent APT sources and all other package versions/statuses remained unchanged. Configuration backups, package archives, private host-key backups, and connection records are retained outside Git under `/home/gao/jingos-maintenance/sshd-20261122T124726Z-s8dekimt/`. The temporary package-startup guard was removed after installation.
+
+Hostname files, the saved NetworkManager profile, and hostname-resolution/SSH records were backed up or recorded under `hostname-20261122T133652Z-6s125bph/` within that maintenance directory. The profile backup contains private network configuration and must remain outside Git.
+
+The maintenance computer's OpenSSH 10.5 client warns that this OpenSSH 8.2 server lacks post-quantum key exchange. A diagnostic connection negotiated `curve25519-sha256` with `chacha20-poly1305@openssh.com` encryption and completed login successfully. The warning concerns the potential future decryption of recorded traffic using quantum computers. A compatible newer server is required to negotiate a post-quantum exchange; see [OpenSSH's explanation](https://openssh.com/pq.html).
 
 ## Root and the desktop user
 
-Run system maintenance commands in the ADB root shell. Flatpak's `--user` refers to **the user executing the command**. Root's user installation directory is separate from `gao`'s.
+Run system maintenance commands in the ADB root shell, or with `sudo` when connected over SSH as `gao`. Flatpak's `--user` refers to **the user executing the command**. Root's user installation directory is separate from `gao`'s.
+
+On 2026-11-22, passwordless sudo was enabled for `gao` at the user's request. `/etc/sudoers.d/99-gao-nopasswd`, owned by `root:root` with mode `0440`, contains:
+
+```sudoers
+gao ALL=(ALL:ALL) NOPASSWD: ALL
+```
+
+The existing `/etc/sudoers` and `/etc/sudoers.d/README` had mode `0640`; both were backed up and changed to `0440` while preserving their contents. Full `visudo -c` validation passed. In a fresh SSH session as UID 1000, `sudo -n -k -- /usr/bin/id -u` returned `0`, verifying passwordless elevation while ignoring cached credentials. SSH continues to use public-key authentication as `gao`.
+
+Sudo configuration backups and validation records are under `sudo-20261122T135631Z-4_dn16pm/` within the SSH maintenance directory above. Removing only the `99-gao-nopasswd` drop-in restores the existing password-required sudo-group policy.
 
 To query the desktop user's Flatpak installation:
 
@@ -96,7 +148,7 @@ runuser -u gao -- flatpak remotes --user --show-details
 runuser -u gao -- flatpak list --user
 ```
 
-Run application launch, display, and file chooser tests from a graphical terminal in `gao`'s desktop session. An ADB shell does not automatically inherit the desktop Wayland and D-Bus environment; a GUI launch from that shell alone is not a reliable application compatibility test.
+Run application launch, display, and file chooser tests from a graphical terminal in `gao`'s desktop session. An ADB or SSH shell does not automatically inherit the desktop Wayland and D-Bus environment; a GUI launch from that shell alone is not a reliable application compatibility test.
 
 ## Installed tools and missing components
 

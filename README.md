@@ -4,7 +4,7 @@ This repository documents software management and development on a JingPad C1 ru
 
 ## Current status
 
-Updated: **2026-11-19**. Initial hardware and Flatpak tests took place on November 12-14, kernel source research on November 16, and the 4.14 backport and device acceptance tests are complete.
+Updated: **2026-11-22**. Initial hardware and Flatpak tests took place on November 12-14, kernel source research on November 16, and the 4.14 backport and device acceptance tests are complete. Wireless SSH and SFTP access were enabled and tested on November 22.
 
 | Item | Current state |
 | --- | --- |
@@ -13,9 +13,10 @@ Updated: **2026-11-19**. Initial hardware and Flatpak tests took place on Novemb
 | Base environment | glibc 2.31, systemd 245, Qt 5.15.2, libhybris |
 | Storage / memory | 40 GiB root partition; approximately 184 GiB in `/home`; 8 GB RAM |
 | Verified functions | Desktop login, touch, speakers, Wi-Fi, DNS, HTTPS, and an ADB root shell work with the combined kernel patches |
+| SSH / SFTP | OpenSSH enabled at boot; key login as `gao` verified over Wi-Fi on port 22 |
 | APT | Still the system package manager; the original JingOS repositories are unavailable |
 | Flatpak | Calculator 51.1 CLI and GUI tests passed; `2+2` returned `4`, and the user confirmed that Calculator, touch, and sound work normally |
-| Development services | Erlang/Elixir is not installed, and no service has been deployed |
+| Development services | Erlang/Elixir is not installed; no Elixir/Phoenix service has been deployed |
 
 **The combined 4.14 patches passed boot, driver compatibility, and Flatpak Calculator acceptance tests on this device. Follow the guide to evaluate aarch64 Flatpak desktop apps, use ARM64 APT packages for the same Ubuntu release for system tools, and use an ARM64 Release with systemd for Elixir services.**
 
@@ -27,7 +28,7 @@ The combined kernel booted successfully. Checks passed for all 11,524 exported s
 
 ## Reading order
 
-1. [Device status and connections](docs/device-status.md): hardware, verified behavior, ADB, accounts, and current limitations.
+1. [Device status and connections](docs/device-status.md): hardware, verified behavior, ADB/SSH, accounts, and current limitations.
 2. [Software installation and repositories](docs/software-management.md): Flatpak compatibility, user installations, architecture checks, and APT repository configuration and rollback.
 3. [Application development and Elixir deployment](docs/development.md): Web, Qt/QML, Flatpak packaging, and ARM64 Releases.
 4. [Historical firmware archive](docs/firmware-archive.md): download links for firmware and tools preserved by the original repository.
@@ -47,6 +48,14 @@ adb -s "$JINGPAD_SERIAL" shell
 ```
 
 The ADB shell on this device is already Linux `root`; neither `adb root` nor `su` is needed. Use the serial reported by the current `adb devices -l` output. The desktop user is `gao`; run user-level Flatpak operations as that account, as described in the [software management guide](docs/software-management.md).
+
+Wireless SSH is also available with the authorized maintenance-computer key. The persistent hostname and LAN DNS name were configured and verified on 2026-11-22:
+
+```bash
+ssh gao@jingpad-a1
+```
+
+The full LAN name is `jingpad-a1.gsmlg.net`; the verified DHCP address was `10.100.8.232`. See [SSH over Wi-Fi](docs/device-status.md#ssh-over-wi-fi) for name resolution, authentication, the host fingerprint, service management, and validation limits.
 
 ## Scope of this record
 
