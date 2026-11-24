@@ -1,0 +1,12 @@
+--- a/drivers/power/supply/sc2730_fast_charger.c
++++ b/drivers/power/supply/sc2730_fast_charger.c
+@@ -564,6 +564,9 @@
+ 	switch (psp) {
+ 	case POWER_SUPPLY_PROP_CHARGE_TYPE:
+ 		val->intval = info->state;
++		if (info->pd_enable &&
++		    val->intval == POWER_SUPPLY_USB_TYPE_PD)
++			val->intval = POWER_SUPPLY_CHARGE_TYPE_FAST;
+ 		if (val->intval < POWER_SUPPLY_CHARGE_TYPE_UNKNOWN ||
+ 				val->intval > POWER_SUPPLY_CHARGE_TYPE_FAST)
+ 			val->intval = POWER_SUPPLY_CHARGE_TYPE_UNKNOWN;

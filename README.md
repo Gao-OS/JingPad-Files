@@ -4,7 +4,7 @@ This repository documents software management and development on a JingPad C1 ru
 
 ## Current status
 
-Updated: **2026-11-22**. Initial hardware and Flatpak tests took place on November 12-14, kernel source research on November 16, and the 4.14 backport and device acceptance tests are complete. Wireless SSH and SFTP access were enabled and tested on November 22.
+Updated: **2026-11-24**. Initial hardware and Flatpak tests took place on November 12-14, kernel source research on November 16, and the 4.14 backport and device acceptance tests are complete. Wireless SSH and SFTP access were enabled and tested on November 22. Read-only PD charging investigation on November 24 found a driver reporting bug; its candidate fix has passed offline checks but has not been installed.
 
 | Item | Current state |
 | --- | --- |
@@ -14,6 +14,7 @@ Updated: **2026-11-22**. Initial hardware and Flatpak tests took place on Novemb
 | Storage / memory | 40 GiB root partition; approximately 184 GiB in `/home`; 8 GB RAM |
 | Verified functions | Desktop login, touch, speakers, Wi-Fi, DNS, HTTPS, and an ADB root shell work with the combined kernel patches |
 | SSH / SFTP | OpenSSH enabled at boot; key login as `gao` verified over Wi-Fi on port 22 |
+| USB-C charging | 100W C-to-C source negotiated at 5V/2A; candidate PD reporting fix is uninstalled; existing 9V/2A driver path remains unverified on hardware |
 | APT | Still the system package manager; the original JingOS repositories are unavailable |
 | Flatpak | Calculator 51.1 CLI and GUI tests passed; `2+2` returned `4`, and the user confirmed that Calculator, touch, and sound work normally |
 | Development services | Erlang/Elixir is not installed; no Elixir/Phoenix service has been deployed |
@@ -36,6 +37,7 @@ The combined kernel booted successfully. Checks passed for all 11,524 exported s
 6. [Kernel source and upgrade feasibility](docs/kernel-upgrade-research.md): official 4.14 source, the UD710 5.15 candidate, driver gaps, and validation steps.
 7. [4.14 mount ID backport execution log](docs/kernel-backport-2026-11-18.md): builds, boot signing, backups, failed attempts, and final device acceptance.
 8. [Rebuilding application and update services](docs/self-hosted-services.md): observed vendor APIs, signed Flatpak/APT repositories, client migration, staged validation, and rollback requirements.
+9. [USB-C PD charging investigation](docs/charging-protocol-investigation-2026-11-24.md): observed 5V contract, existing 9V driver path, charge-type bug, offline candidate checks, and remaining hardware validation.
 
 ## Connect to the device
 
